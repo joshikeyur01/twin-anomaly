@@ -1,0 +1,62 @@
+// The gRPC side of the contract: derived state computed by state-svc.
+//
+// Evolution rules (ADR-0003): changes are additive only, field numbers are
+// never reused, and removed fields get a `reserved` statement, not a new
+// tenant. Regenerate stubs with `just gen` and commit the diff.
+
+syntax = "proto3";
+
+package twin.state.v1;
+
+service StateService {
+  // Latest derived state. NOT_FOUND until the first telemetry arrives.
+  rpc GetState(GetStateRequest) returns (TwinState);
+
+  // Every recomputed state as a server stream. The server may decimate to
+  // honour max_rate_hz; it never buffers a lagging client (drop, don't queue).
+  rpc StreamState(StreamStateRequest) returns (stream TwinState);
+}
+
+message GetStateRequest {
+  string asset = 1;  // e.g. "ur5"; empty selects the default asset
+}
+
+message StreamStateRequest {
+  string asset = 1;
+  double max_rate_hz = 2;  // 0 = uncapped (telemetry rate, ~50 Hz)
+}
+
+message TwinState {
+  uint32 schema_version = 1;
+  string asset = 2;
+  uint64 stamp_ns = 3;  // stamp of the newest telemetry incorporated
+  Pose end_effector = 4;
+  repeated JointState joints = 5;  // ordered as contracts.UR5_JOINT_NAMES
+  double rms_window_s = 6;  // rolling window behind velocity_rms
+}
+
+message JointState {
+  string name = 1;
+  double position_rad = 2;
+  double velocity_rad_s = 3;
+  double effort_nm = 4;
+  double velocity_rms = 5;  // RMS of velocity over the rolling window
+}
+
+message Pose {
+  Vector3 position_m = 1;
+  Quaternion orientation = 2;  // unit quaternion, x-y-z-w
+}
+
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Quaternion {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
