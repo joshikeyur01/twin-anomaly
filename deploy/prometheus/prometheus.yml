@@ -1,0 +1,17 @@
+# Scrapes /metrics from the four services. The 2s interval is deliberately
+# aggressive for a dev stack: the chaos demo's DoD says a killed service's
+# status cell flips red "within one scrape interval", so the interval is the
+# demo's reaction time.
+
+global:
+  scrape_interval: 2s
+  scrape_timeout: 1s
+
+scrape_configs:
+  - job_name: twin-services
+    static_configs:
+      - targets:
+          - telemetry-svc:8001
+          - state-svc:8002
+          - command-svc:8003
+          - viz-svc:8004

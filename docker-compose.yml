@@ -1,0 +1,146 @@
+name: twin-anomaly
+
+# Service builds use the repo root as context so images can copy contracts/
+# (and, for anomaly-svc, features/). Model artefacts are NOT baked into the
+# image — models/ is bind-mounted read-only, so `just lfs` + restart swaps a
+# model without a rebuild, and the image stays artefact-free.
+
+x-svc-healthcheck: &svc-healthcheck
+  interval: 5s
+  timeout: 2s
+  retries: 3
+  start_period: 10s
+
+services:
+  # ─── infra ─────────────────────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminadmin
+      DOCKER_INFLUXDB_INIT_ORG: twin
+      DOCKER_INFLUXDB_INIT_BUCKET: telemetry
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: dev-token-change-me
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:11.2.0
+    depends_on: [influxdb, prometheus]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+  # ─── inherited services (unchanged from twin-services) ─────────────────
+  telemetry-svc:
+    build:
+      context: .
+      dockerfile: services/telemetry-svc/Dockerfile
+    depends_on: [mosquitto, influxdb]
+    ports:
+      - "8001:8001"
+    environment:
+      MQTT_HOST: mosquitto
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_TOKEN: dev-token-change-me
+      INFLUX_ORG: twin
+      INFLUX_BUCKET: telemetry
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8001/healthz/ready', timeout=2)"]
+    restart: unless-stopped
+
+  state-svc:
+    build:
+      context: .
+      dockerfile: services/state-svc/Dockerfile
+    depends_on: [mosquitto]
+    ports:
+      - "8002:8002"
+      - "50051:50051"
+    environment:
+      MQTT_HOST: mosquitto
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8002/healthz/ready', timeout=2)"]
+    restart: unless-stopped
+
+  command-svc:
+    build:
+      context: .
+      dockerfile: services/command-svc/Dockerfile
+    depends_on: [mosquitto]
+    ports:
+      - "8003:8003"
+    environment:
+      MQTT_HOST: mosquitto
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8003/healthz/ready', timeout=2)"]
+    restart: unless-stopped
+
+  viz-svc:
+    build:
+      context: .
+      dockerfile: services/viz-svc/Dockerfile
+    depends_on: [state-svc]
+    ports:
+      - "8004:8004"
+    environment:
+      STATE_GRPC_TARGET: state-svc:50051
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8004/healthz/ready', timeout=2)"]
+    restart: unless-stopped
+
+  # ─── this repo's service ───────────────────────────────────────────────
+  anomaly-svc:
+    build:
+      context: .
+      dockerfile: services/anomaly-svc/Dockerfile
+    depends_on: [mosquitto]
+    ports:
+      - "8005:8005"
+    environment:
+      MQTT_HOST: mosquitto
+      # Exact artefact, never "latest" (STYLE.md). The manifest sits beside
+      # it and carries the threshold; readiness fails if either is missing
+      # or the features/ version mismatches.
+      MODEL_PATH: /models/isoforest-v1.joblib
+    volumes:
+      - ./models:/models:ro
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8005/healthz/ready', timeout=2)"]
+    restart: unless-stopped
+
+volumes:
+  influxdb-data:
+  grafana-data:
