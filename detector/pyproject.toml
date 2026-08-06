@@ -1,0 +1,28 @@
+# The scoring contract: the same fit/score/threshold code the evaluation
+# notebooks use and anomaly-svc serves. Like features/, this exists to kill
+# train/serve skew — the artefact anomaly-svc loads is an instance of a
+# class defined here, scored by this code, never a reimplementation.
+# Depends on features/ for the vector layout; scikit-learn + joblib for the
+# model runtime. No FastAPI, no I/O beyond artefact save/load.
+[project]
+name = "detector"
+version = "0.1.0"
+description = "Rule/IsolationForest detectors, manifests, and evaluation for twin-anomaly — shared by notebooks and anomaly-svc."
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "features",
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
+]
+
+[tool.uv.sources]
+features = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/detector"]
