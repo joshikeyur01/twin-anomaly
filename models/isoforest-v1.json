@@ -1,0 +1,26 @@
+{
+  "dataset_fingerprint": "2fcf5ced90dcd1677e504e24fc0f846ba3feb5651467a095fc5ea3ef9d4991ae",
+  "features_version": "0.1.0",
+  "metrics": {
+    "normal_fpr": 0.0147,
+    "precision": 0.994,
+    "recall_by_kind": {
+      "dropout": 0.9322,
+      "encoder": 0.2039,
+      "friction": 0.61,
+      "stuck": 0.4118
+    },
+    "support_by_kind": {
+      "dropout": 59,
+      "encoder": 103,
+      "friction": 100,
+      "stuck": 68
+    }
+  },
+  "model_kind": "forest",
+  "n_train": 157,
+  "seed": 0,
+  "stem": "isoforest-v1",
+  "threshold": 0.5796188096642232,
+  "trained_at": "2026-07-23"
+}
