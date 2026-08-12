@@ -1,0 +1,138 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.x"  # matches local dev
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install workspace
+        run: uv sync --all-groups --all-packages
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Type-check
+        run: uv run mypy contracts features detector fault-injector data-pipeline services bridge
+
+      # `model` tests need real artefacts (git-lfs); they run in the models
+      # job below with lfs checked out, not here.
+      - name: Test
+        run: uv run pytest -m "not slow and not chaos and not model"
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.x"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install workspace
+        run: uv sync --all-groups --all-packages
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Generated stubs are current
+        run: |
+          just gen
+          git diff --exit-code contracts/src/contracts/gen \
+            || { echo "::error::contracts/gen is stale — run 'just gen' and commit"; exit 1; }
+
+      # Crude on purpose: payload shapes live in contracts/, never in the
+      # things that send or receive them (AGENTS.md). fault-injector and
+      # data-pipeline are included — their internal types are dataclasses;
+      # a BaseModel there means a payload shape escaped contracts/.
+      - name: No local schemas outside contracts
+        run: |
+          if grep -rnE "class .*\(.*BaseModel.*\)" services/ fault-injector/ data-pipeline/ --include="*.py"; then
+            echo "::error::payload shape declared outside contracts/ — move it there"
+            exit 1
+          fi
+
+  notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.x"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install workspace
+        run: uv sync --all-groups --all-packages
+
+      # STYLE.md: notebooks commit logic, never outputs. Same tool as the
+      # pre-commit hook, so CI catches what a --no-verify commit skipped.
+      - name: Notebook outputs are stripped
+        run: |
+          if [ -d notebooks ]; then
+            find notebooks -name '*.ipynb' -print0 | xargs -0 -r uv run nbstripout
+            git diff --exit-code notebooks/ \
+              || { echo "::error::notebook outputs committed — run nbstripout"; exit 1; }
+          else
+            echo "no notebooks yet (Phase 3)"
+          fi
+
+  models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.x"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install workspace
+        run: uv sync --all-groups --all-packages
+
+      # Every artefact must be a real LFS object with a manifest beside it;
+      # the model-marked tests then pin scorer outputs to notebook-computed
+      # golden values (Phase 4).
+      - name: Model tests
+        run: |
+          git lfs fsck --pointers
+          uv run pytest -m "model" \
+            || { [ $? -eq 5 ] && echo "no model tests yet (Phase 4)"; }
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose
+        run: docker compose config >/dev/null
+
+      - name: Build service images
+        run: docker compose build
